@@ -5,3 +5,4 @@ torchvision==0.3.0
 tqdm
 matplotlib
 regex
+transformers
