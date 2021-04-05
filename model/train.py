@@ -181,17 +181,20 @@ class TranslationTrainer():
 if __name__ == '__main__':
     data_name = 'DrRepair_deepfix'
     vocab_path = '../data_processing/vocab.txt'
-    data_path = '../data/' + data_name + '/test_2.txt'
+    data_path = '../data/' + data_name + '/data_all.txt'
     checkpoint_path = '../log/check_point'
 
     # model setting
     model_name = 'transformer_' + data_name + '_sin'
     vocab_num = 1076
     max_length = 500
-    d_model = 512
-    head_num = 8
+    #d_model = 300
+    d_model = 200
+    #head_num = 8
+    head_num = 4
     dropout = 0.1
-    N = 6
+    #N = 6
+    N = 3
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     tokenizer = BertTokenizer(vocab_file=vocab_path, do_lower_case=False)
