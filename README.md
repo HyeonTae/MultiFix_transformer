@@ -55,13 +55,3 @@ Train the data with our model.
 
 However, this takes a significant time, so we provide 2 models that were trained.
 > log/pth
-
-## Evaluation
-You can check the repair result through the saved model.
-```	sh
-    bash evaluation.sh
-```
-
-## Known issues
-- If the beam size is 100, it takes a significant time.
-- We did not fix the seed, so training results may be slightly different. We actually use the average of the three training results.
