@@ -11,10 +11,15 @@ The models are trained using folloing hardware:
 - 64GB RAM
 
 ## Dependencies
+- Python version is 3.6.7
+We use the following version of Pytorch.
+gpu support (CUDA==10.1)
+- torch==1.1.0
+gpu support (CUDA>10.1)
+- torch==1.5.0
 Etc. (Included in "requirements.txt")
-- torch
-- torchtext
-- numpy
+- torchtext==0.3.1
+- numpy==1.16.1
 - tqdm
 - matplotlib
 - regex
@@ -32,16 +37,22 @@ Etc. (Included in "requirements.txt")
     deactivate
 ```
 
+## Datasets
+Our dataset is based on the dataset provided by DeepFix.
+https://www.cse.iitk.ac.in/users/karkare/prutor/prutor-deepfix-09-12-2017.zip
+
 ## HOW TO EXECUTE OUR MODEL?
 ## Data Processing
-Download the dataset that has already been preprocessed
-```
-    $ bash download_processing_data.sh
+Generate training data based on the DeepFix and DrRepair dataset.
+```	sh
+    bash data_processing.sh
 ```
 
 ## Model training
 Train the data with our model.
+```	sh
+    bash model_training.sh
 ```
-    $ cd model
-    $ cd train.py
-```
+
+However, this takes a significant time, so we provide 2 models that were trained.
+> log/pth
