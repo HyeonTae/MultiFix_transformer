@@ -23,7 +23,7 @@ def self_attention(query, key, value, mask=None):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, head_num =8 , d_model = 512,dropout = 0.1):
+    def __init__(self, head_num =8 , d_model = 300,dropout = 0.1):
         super(MultiHeadAttention,self).__init__()
 
         # print(d_model % head_num)
@@ -157,14 +157,56 @@ class PositionalEncoding(nn.Module):
         x = x + Variable(self.positional_encoding[:, :x.size(1)], requires_grad=False)
         return self.dropout(x)
 
-class PositionalEmbedding(nn.Module):
-    def __init__(self, dim, max_seq_len):
+class SynchronizedPositionalEmbedding(nn.Module):
+    def __init__(self, max_seq_len, dim):
         super().__init__()
-        self.embedding = nn.Embedding(max_seq_len, dim)
+        import sentencepiece as spm
+        self.sp = spm.SentencePieceProcessor()
+        self.sp.Load('../vocab/vocab.model')
+        self.insert_tok = self.insert_token()
 
-    def forward(self, x):
-        t = torch.arange(x.shape[1], device=x.device)
-        return self.embedding(t)
+        self.max_len = max_seq_len
+        self.pos_embedding = nn.Embedding(max_seq_len, dim)
+
+    def insert_token(self):
+        insert_tok = list()
+        for i in range(1,422):
+            insert_tok.append(self.sp.piece_to_id('▁' + str(i)))
+
+        return insert_tok
+
+    def forward(self, x, mask, target=None):
+        batch_size = x.size(0)
+        input_lengths = list()
+        for i in mask:
+            input_lengths.append(i.sum().item())
+
+        pe = list()
+        if target is None:
+            for batch in range(batch_size):
+                p = list()
+                for pos in range(self.max_len):
+                    if input_lengths[batch] - pos > 0:
+                        p.append(input_lengths[batch]-pos)
+                    else:
+                        p.append(0)
+                pe.append(p)
+        else:
+            for batch in range(batch_size):
+                p = list()
+                for i in range(self.max_len):
+                    if input_lengths[batch] <= 0:
+                        p.append(0)
+                    else:
+                        if target[batch][i] not in self.insert_tok:
+                            input_lengths[batch] -= 1
+                        p.append(input_lengths[batch])
+                pe.append(p)
+        pos = torch.tensor(pe)
+        if torch.cuda.is_available():
+            pos = pos.cuda()
+        x = x + self.pos_embedding(pos)
+        return x
 
 class Generator(nn.Module):
     def __init__(self, d_model, vocab_num):
@@ -178,10 +220,14 @@ class Generator(nn.Module):
         return x
 
 class Transformer(nn.Module):
-    def __init__(self,vocab_num, d_model, max_seq_len, head_num, dropout, N):
+    def __init__(self,vocab_num, d_model, max_seq_len, head_num, dropout, N, sync_pos=False):
         super(Transformer,self).__init__()
         self.embedding = Embeddings(vocab_num, d_model)
-        self.positional_encoding = PositionalEncoding(max_seq_len,d_model)
+        self.sync_pos = sync_pos
+        if self.sync_pos:
+            self.positional_encoding = SynchronizedPositionalEmbedding(max_seq_len,d_model)
+        else:
+            self.positional_encoding = PositionalEncoding(max_seq_len,d_model)
 
         self.encoders = clones(Encoder(d_model=d_model, head_num=head_num, dropout=dropout), N)
         self.decoders = clones(Decoder(d_model=d_model, head_num=head_num, dropout=dropout), N)
@@ -189,11 +235,20 @@ class Transformer(nn.Module):
         self.generator = Generator(d_model, vocab_num)
 
     def forward(self, input, target, input_mask, target_mask, labels=None):
-        x = self.positional_encoding(self.embedding(input))
+        if self.sync_pos:
+            x = self.positional_encoding(self.embedding(input), input_mask)
+        else:
+            x = self.positional_encoding(self.embedding(input))
+        input_mask = input_mask.unsqueeze(1)
+        target_mask = target_mask.unsqueeze(1)
         for encoder in self.encoders:
             x = encoder(x, input_mask)
 
-        target = self.positional_encoding(self.embedding(target))
+        if self.sync_pos:
+            target = self.positional_encoding(self.embedding(target), target_mask, target=target)
+        else:
+            target = self.positional_encoding(self.embedding(target))
+
         for decoder in self.decoders:
             # target, encoder_output, target_mask, encoder_mask)
             target = decoder(target, x, target_mask, input_mask)
@@ -211,13 +266,19 @@ class Transformer(nn.Module):
         return lm_logits, loss
 
     def encode(self,input, input_mask):
-        x = self.positional_encoding(self.embedding(input))
+        if self.sync_pos:
+            x = self.positional_encoding(self.embedding(input), input_mask)
+        else:
+            x = self.positional_encoding(self.embedding(input))
         for encoder in self.encoders:
             x = encoder(x, input_mask)
         return x
 
     def decode(self, encode_output, encoder_mask, target, target_mask):
-        target = self.positional_encoding(self.embedding(target))
+        if self.sync_pos:
+            target = self.positional_encoding(self.embedding(target), target_mask, target=target)
+        else:
+            target = self.positional_encoding(self.embedding(target))
         for decoder in self.decoders:
             #target, encoder_output, target_mask, encoder_mask
             target = decoder(target, encode_output, target_mask, encoder_mask)
