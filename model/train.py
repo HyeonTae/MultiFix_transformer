@@ -1,17 +1,15 @@
 import torch
 from transformer import Transformer
-from transformers import BertTokenizer
-from dataset import TranslationDataset
-from torch.utils.data import DataLoader, random_split
+from transformers import T5Tokenizer
 from tqdm import tqdm
+import pandas as pd
 import math
 import os
 import time
 
 
-class TranslationTrainer():
+class Trainer():
     def __init__(self,
-                 dataset,
                  tokenizer,
                  model,
                  max_len,
@@ -20,46 +18,22 @@ class TranslationTrainer():
                  checkpoint_path,
                  batch_size,
                  ):
-        self.dataset = dataset
         self.tokenizer = tokenizer
         self.model = model
         self.max_len = max_len
         self.model_name = model_name
         self.checkpoint_path = checkpoint_path
         self.device = device
-        self.ntoken = tokenizer.vocab_size
         self.batch_size = batch_size
 
-    def my_collate_fn(self, samples):
-        input_str =[]
-        target_str =[]
-        input_str.append([sample['input_str'] for sample in samples])
-        input = [sample['input'] for sample in samples]
-        input_mask = [sample['input_mask'] for sample in samples]
-        target = [sample['target'] for sample in samples]
-        target_mask = [sample['target_mask'] for sample in samples]
-        token_num = [sample['token_num'] for sample in samples]
-        target_str.append([sample['target_str'] for sample in samples])
+    def set_data(self, train_path, val_path):
+        train_df = pd.read_csv(train_path, index_col=[0])
+        train_df = train_df.sample(frac = 1)
 
-        return {
-            "input_str":input_str,
-            "input":torch.stack(input).contiguous(),                                              # input
-            "input_mask": torch.stack(input_mask).contiguous(),       # input_mask
-            "target": torch.stack(target).contiguous(),                                           # target,
-            "target_mask": torch.stack(target_mask).contiguous(),   # target_mask
-            "token_num": torch.stack(token_num).contiguous(),   # token_num
-            "target_str": target_str
-        }
+        val_df = pd.read_csv(val_path, index_col=[0])
+        val_df = val_df.sample(frac = 1)
 
-    def build_dataloaders(self, train_test_split=0.1, train_shuffle=True, eval_shuffle=True):
-        dataset_len = len(self.dataset)
-        eval_len = int(dataset_len * train_test_split)
-        train_len = dataset_len - eval_len
-        train_dataset, eval_dataset = random_split(self.dataset, (train_len, eval_len))
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=train_shuffle, collate_fn=self.my_collate_fn)
-        eval_loader = DataLoader(eval_dataset, batch_size=self.batch_size, shuffle=eval_shuffle , collate_fn=self.my_collate_fn)
-
-        return train_loader, eval_loader
+        return train_df, val_df
 
     def train(self, epochs, train_dataset, eval_dataset, optimizer, scheduler):
         self.model.train()
@@ -86,25 +60,37 @@ class TranslationTrainer():
 
         for epoch in range(start_epoch, epochs):
             epoch_start_time = time.time()
-
-            pb = tqdm(enumerate(train_dataset),
+            train_num_of_batches = int(train_dataset_length/self.batch_size)
+            pb = tqdm(range(train_num_of_batches),
                       desc=f'Epoch-{epoch} Iterator',
-                      total=train_dataset_length)
-                      #bar_format='{l_bar}{bar:10}{r_bar}'
-                      #)
+                      total=train_num_of_batches,
+                      bar_format='{l_bar}{bar:10}{r_bar}'
+                      )
             pb.update(start_step)
 
-            for i,data in pb:
+            for i in pb:
                 if i < start_step:
                     continue
 
-                input = data['input'].to(self.device)
-                target = data['target'].to(self.device)
-                input_mask = data['input_mask'].to(self.device)
-                target_mask = data['target_mask'].to(self.device)
+                input_list=[]
+                target_list=[]
+                data = train_dataset[i*batch_size:i*batch_size+batch_size]
+                for indx, row in data.iterrows():
+                    _input = row['token']
+                    _target = row['target']
+                    input_list.append(_input)
+                    target_list.append(_target)
+                inputs = tokenizer.batch_encode_plus(input_list, return_tensors='pt',
+                        padding='max_length', truncation=True, max_length=400)
+                targets = tokenizer.batch_encode_plus(target_list, return_tensors='pt',
+                        padding='max_length', truncation=True, max_length=400)
+
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
 
                 optimizer.zero_grad()
-                generator_logit, loss = self.model.forward(input, target, input_mask, target_mask, labels=target)
+                generator_logit, loss = self.model.forward(inputs["input_ids"], targets["input_ids"],
+                        inputs["attention_mask"], targets["attention_mask"], labels=targets["input_ids"])
 
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -113,7 +99,7 @@ class TranslationTrainer():
                 losses[global_steps] = loss.item()
                 total_loss += loss.item()
                 log_interval = 1
-                save_interval = 500
+                save_interval = 5000
 
                 global_steps += 1
 
@@ -129,14 +115,21 @@ class TranslationTrainer():
                     pb.set_postfix_str('| epoch {:3d} | {:5d}/{:5d} batches | '
                                      'lr {:02.2f} | ms/batch {:5.2f} | '
                                      'loss {:5.2f} | ppl {:8.2f}'.format(
-                                epoch, i, len(train_dataset), scheduler.get_lr()[0],
+                                epoch, i, train_num_of_batches, scheduler.get_lr()[0],
                                 elapsed * 1000 / log_interval,
                                 cur_loss, math.exp(cur_loss)))
                     total_loss = 0
                     start_time = time.time()
                     # self.save(epoch, self.model, optimizer, losses, global_steps)
                     if i % save_interval == 0:
-                        self.save(epoch, self.model, optimizer, losses, global_steps)
+                        with open('../log/check_point/sync_model_log.txt', 'a') as ff:
+                            ff.write('| epoch {:3d} | {:5d}/{:5d} batches | '
+                            'lr {:02.2f} | ms/batch {:5.2f} | '
+                            'loss {:5.2f} | ppl {:8.2f}\n'.format(
+                             epoch, i, train_num_of_batches, scheduler.get_lr()[0],
+                             elapsed * 1000 / log_interval,
+                             cur_loss, math.exp(cur_loss)))
+                        #self.save(epoch, self.model, optimizer, losses, global_steps)
 
             val_loss = self.evaluate(eval_dataset)
             self.model.train()
@@ -146,6 +139,7 @@ class TranslationTrainer():
                                        val_loss, math.exp(val_loss)))
             print('-' * 89)
             if val_loss < best_val_loss:
+                torch.save(model.state_dict(), '../log/pth/sync_model_save.pth')
                 best_val_loss = val_loss
                 best_model = model
             start_step = 0
@@ -154,16 +148,29 @@ class TranslationTrainer():
     def evaluate(self, dataset):
         self.model.eval()
         total_loss = 0.
-
         self.model.to(self.device)
-        with torch.no_grad():
-            for i, data in enumerate(dataset):
-                input = data['input'].to(self.device)
-                target = data['target'].to(self.device)
-                input_mask = data['input_mask'].to(self.device)
-                target_mask = data['target_mask'].to(self.device)
 
-                generator_logit, loss = self.model.forward(input, target, input_mask, target_mask, labels=target)
+        num_of_batches = int(len(dataset)/self.batch_size)
+        with torch.no_grad():
+            for i in range(num_of_batches):
+                input_list=[]
+                target_list=[]
+                data = dataset[i*batch_size:i*batch_size+batch_size]
+                for indx, row in data.iterrows():
+                    _input = row['token']
+                    _target = row['target']
+                    input_list.append(_input)
+                    target_list.append(_target)
+                inputs = tokenizer.batch_encode_plus(input_list, return_tensors='pt',
+                        padding='max_length', truncation=True, max_length=400)
+                targets = tokenizer.batch_encode_plus(target_list, return_tensors='pt',
+                        padding='max_length', truncation=True, max_length=400)
+
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
+
+                generator_logit, loss = self.model.forward(inputs["input_ids"], targets["input_ids"],
+                        inputs["attention_mask"], targets["attention_mask"], labels=targets["input_ids"])
                 total_loss += loss.item()
 
         return total_loss / (len(dataset) - 1)
@@ -179,46 +186,46 @@ class TranslationTrainer():
 
 
 if __name__ == '__main__':
-    data_name = 'DrRepair_deepfix'
-    vocab_path = '../data_processing/vocab.txt'
-    data_path = '../data/' + data_name + '/data_all.txt'
+    data_name = 'DeepFix'
+    vocab_path = '../vocab/vocab.model'
+    train_path = '../data/' + data_name + '/train.csv'
+    val_path = '../data/' + data_name + '/val.csv'
+    #train_path = '../data/' + data_name + '/test.csv'
+    #val_path = '../data/' + data_name + '/test.csv'
     checkpoint_path = '../log/check_point'
 
     # model setting
     model_name = 'transformer_' + data_name + '_sin'
-    vocab_num = 1076
-    max_length = 500
+    vocab_num = 1267
+    max_length = 400
     #d_model = 300
     d_model = 200
-    #head_num = 8
-    head_num = 4
+    head_num = 8
+    #head_num = 4
     dropout = 0.1
-    #N = 6
-    N = 3
+    N = 6
+    #N = 3
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    tokenizer = BertTokenizer(vocab_file=vocab_path, do_lower_case=False)
+    tokenizer = T5Tokenizer(vocab_path)
 
     # hyper parameter
     epochs = 100
-    batch_size = 4
+    batch_size = 64
     padding_idx = tokenizer.pad_token_id
     learning_rate = 0.01
-
-    dataset = TranslationDataset(tokenizer=tokenizer, file_path=data_path, max_length=max_length)
 
     model = Transformer(vocab_num=vocab_num,
                           d_model=d_model,
                           max_seq_len=max_length,
                           head_num=head_num,
                           dropout=dropout,
-                          N=N)
+                          N=N,
+                          sync_pos=True)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.95)
 
-    trainer = TranslationTrainer(dataset, tokenizer, model, max_length, device, model_name, checkpoint_path, batch_size)
-
-    train_dataloader, eval_dataloader = trainer.build_dataloaders(train_test_split=0.2)
-
-    trainer.train(epochs, train_dataloader, eval_dataloader, optimizer, scheduler)
+    trainer = Trainer(tokenizer, model, max_length, device, model_name, checkpoint_path, batch_size)
+    train, val = trainer.set_data(train_path, val_path)
+    trainer.train(epochs, train, val, optimizer, scheduler)
