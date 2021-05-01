@@ -15,14 +15,12 @@ class Trainer():
                  max_len,
                  device,
                  model_name,
-                 checkpoint_path,
                  batch_size,
                  ):
         self.tokenizer = tokenizer
         self.model = model
         self.max_len = max_len
         self.model_name = model_name
-        self.checkpoint_path = checkpoint_path
         self.device = device
         self.batch_size = batch_size
 
@@ -48,16 +46,6 @@ class Trainer():
         train_dataset_length = len(train_dataset)
 
         self.model.to(self.device)
-        if os.path.isfile(f'{self.checkpoint_path}/{self.model_name}.pth'):
-            checkpoint = torch.load(f'{self.checkpoint_path}/{self.model_name}.pth', map_location=self.device)
-            start_epoch = checkpoint['epoch']
-            losses = checkpoint['losses']
-            global_steps = checkpoint['train_step']
-            start_step = global_steps if start_epoch == 0 else (global_steps % train_dataset_length) + 1
-
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-
         for epoch in range(start_epoch, epochs):
             epoch_start_time = time.time()
             train_num_of_batches = int(train_dataset_length/self.batch_size)
@@ -120,16 +108,14 @@ class Trainer():
                                 cur_loss, math.exp(cur_loss)))
                     total_loss = 0
                     start_time = time.time()
-                    # self.save(epoch, self.model, optimizer, losses, global_steps)
                     if i % save_interval == 0:
-                        with open('../log/check_point/sync_model_log.txt', 'a') as ff:
+                        with open('../log/check_point/' + self.model_name + '_model_log.txt', 'a') as ff:
                             ff.write('| epoch {:3d} | {:5d}/{:5d} batches | '
                             'lr {:02.2f} | ms/batch {:5.2f} | '
                             'loss {:5.2f} | ppl {:8.2f}\n'.format(
                              epoch, i, train_num_of_batches, scheduler.get_lr()[0],
                              elapsed * 1000 / log_interval,
                              cur_loss, math.exp(cur_loss)))
-                        #self.save(epoch, self.model, optimizer, losses, global_steps)
 
             val_loss = self.evaluate(eval_dataset)
             self.model.train()
@@ -139,7 +125,7 @@ class Trainer():
                                        val_loss, math.exp(val_loss)))
             print('-' * 89)
             if val_loss < best_val_loss:
-                torch.save(model.state_dict(), '../log/pth/sync_model_save.pth')
+                torch.save(model.state_dict(), '../log/pth/' + self.model_name + '_model_save.pth')
                 best_val_loss = val_loss
                 best_model = model
             start_step = 0
@@ -175,42 +161,34 @@ class Trainer():
 
         return total_loss / (len(dataset) - 1)
 
-    def save(self, epoch, model, optimizer, losses, train_step):
-        torch.save({
-              'epoch': epoch,
-              'model_state_dict': model.state_dict(),
-              'optimizer_state_dict': optimizer.state_dict(),
-              'losses': losses,
-              'train_step': train_step,
-               }, f'{self.checkpoint_path}/{self.model_name}.pth')
-
-
 if __name__ == '__main__':
     data_name = 'DeepFix'
     vocab_path = '../vocab/vocab.model'
     train_path = '../data/' + data_name + '/train.csv'
     val_path = '../data/' + data_name + '/val.csv'
-    #train_path = '../data/' + data_name + '/test.csv'
-    #val_path = '../data/' + data_name + '/test.csv'
-    checkpoint_path = '../log/check_point'
+
+    if not os.path.exists("../log/"):
+        os.mkdir("../log/")
+    if not os.path.exists("../log/pth/"):
+        os.mkdir("../log/pth/")
+    if not os.path.exists("../log/check_point"):
+        os.mkdir("../log/check_point")
 
     # model setting
-    model_name = 'transformer_' + data_name + '_sin'
+    sync_pos = False
+    model_name = 'transformer_' + data_name + ('_sync_pos' if sync_pos else '')
     vocab_num = 1267
     max_length = 400
-    #d_model = 300
     d_model = 200
     head_num = 8
-    #head_num = 4
     dropout = 0.1
     N = 6
-    #N = 3
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     tokenizer = T5Tokenizer(vocab_path)
 
     # hyper parameter
-    epochs = 100
+    epochs = 50
     batch_size = 64
     padding_idx = tokenizer.pad_token_id
     learning_rate = 0.01
@@ -221,11 +199,11 @@ if __name__ == '__main__':
                           head_num=head_num,
                           dropout=dropout,
                           N=N,
-                          sync_pos=True)
+                          sync_pos=sync_pos)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.95)
 
-    trainer = Trainer(tokenizer, model, max_length, device, model_name, checkpoint_path, batch_size)
+    trainer = Trainer(tokenizer, model, max_length, device, model_name, batch_size)
     train, val = trainer.set_data(train_path, val_path)
     trainer.train(epochs, train, val, optimizer, scheduler)
