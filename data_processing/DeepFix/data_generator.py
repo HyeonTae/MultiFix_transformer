@@ -10,8 +10,9 @@ import numpy as np
 from functools import partial
 import json
 from tqdm import tqdm
+import pandas as pd
 
-with open("data_processing/DeepFix/target_vocab.json", "r") as json_file:
+with open("data_processing/target_vocab.json", "r") as json_file:
     target_vocab = json.load(json_file)
 
 class FixIDNotFoundInSource(Exception):
@@ -104,14 +105,14 @@ def generate_training_data(db_path, bins, validation_users, min_program_length, 
     rng = np.random.RandomState(seed)
 
     if kind_mutations == 'typo':
-        from data_processing.DeepFix_style.typo_mutator import LoopCountThresholdExceededException, FailedToMutateException, Typo_Mutate, typo_mutate
+        from data_processing.DeepFix.typo_mutator import LoopCountThresholdExceededException, FailedToMutateException, Typo_Mutate, typo_mutate
         mutator_obj = Typo_Mutate(rng)
         mutate = partial(typo_mutate, mutator_obj)
         op = "replace"
 
         def rename_ids(x, y): return (x, y)
     else:
-        from data_processing.DeepFix_style.undeclared_mutator import LoopCountThresholdExceededException, FailedToMutateException, id_mutate
+        from data_processing.DeepFix.undeclared_mutator import LoopCountThresholdExceededException, FailedToMutateException, id_mutate
         mutate = partial(id_mutate, rng)
         rename_ids = partial(rename_ids_, rng)
         op = "insert"
@@ -249,8 +250,8 @@ if __name__ == '__main__':
     max_mutations = 5
 
     db_path = os.path.join('data', 'deepfix_raw_data', 'dataset.db')
-    validation_users = np.load(os.path.join('data', 'deepfix_raw_data', 'validation_users.npy')).item()
-    bins = np.load(os.path.join('data', 'deepfix_raw_data', 'bins.npy'))
+    validation_users = np.load(os.path.join('data', 'deepfix_raw_data', 'validation_users.npy'), allow_pickle = True).item()
+    bins = np.load(os.path.join('data', 'deepfix_raw_data', 'bins.npy'), allow_pickle = True)
 
     seed = 1189
 
@@ -265,13 +266,21 @@ if __name__ == '__main__':
                                     min_program_length, max_program_length, max_fix_length,
                                     kind_mutations, max_mutations, max_variants, seed)
 
-        with open(output_dir+"/data_train.txt", 'w') as train:
-            for k in result['train']:
-                for i in result['train'][k]:
-                    train.write("%s\t%s\n" % (i[0], i[5]))
-        with open(output_dir+"/data_val.txt", 'w') as val:
-            for k in result['validation']:
-                for i in result['validation'][k]:
-                    val.write("%s\t%s\n" % (i[0], i[5]))
+        train = {'token':[], 'target':[]}
+        val = {'token':[], 'target':[]}
+
+        for k in result['train']:
+            for i in result['train'][k]:
+                train['token'].append(i[0])
+                train['target'].append(i[5])
+        for k in result['validation']:
+            for i in result['validation'][k]:
+                val['token'].append(i[0])
+                val['target'].append(i[5])
+
+        train_df=pd.DataFrame(train)
+        train_df.to_csv(output_dir+'/train.csv')
+        val_df=pd.DataFrame(val)
+        val_df.to_csv(output_dir+'/val.csv')
 
         print('\n\n--------------- outputs written to {} ---------------\n\n'.format(output_directory))

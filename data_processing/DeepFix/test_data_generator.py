@@ -57,7 +57,7 @@ if __name__ == "__main__":
     min_program_length = 75
 
     db_path = os.path.join('data', 'deepfix_raw_data', 'dataset.db')
-    bins = np.load(os.path.join('data', 'deepfix_raw_data', 'bins.npy'))
+    bins = np.load(os.path.join('data', 'deepfix_raw_data', 'bins.npy'), allow_pickle = True)
 
     output_dir = os.path.join('data', 'deepfix_raw_data')
 

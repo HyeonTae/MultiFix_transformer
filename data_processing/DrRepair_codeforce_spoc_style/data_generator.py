@@ -13,10 +13,11 @@ import json
 import copy
 from tqdm import tqdm
 import glob
+import pandas as pd
 
 tokenize = C_Tokenizer().tokenize
 
-with open("data_processing/DrRepair_codeforce_spoc_style/target_vocab.json", "r") as json_file:
+with open("data_processing/target_vocab.json", "r") as json_file:
     target_vocab = json.load(json_file)
 
 class FixIDNotFoundInSource(Exception):
@@ -131,13 +132,21 @@ if __name__ == '__main__':
 
     result = generate_training_data(validation_keys)
 
-    with open(output_dir+"/data_train.txt", 'w') as train:
-        for k in result['train']:
-            for i in result['train'][k]:
-                train.write("%s\t%s\n" % (i[0], i[4]))
-    with open(output_dir+"/data_val.txt", 'w') as val:
-        for k in result['validation']:
-            for i in result['validation'][k]:
-                val.write("%s\t%s\n" % (i[0], i[4]))
+    train = {'token':[], 'target':[]}
+    val = {'token':[], 'target':[]}
+
+    for k in result['train']:
+        for i in result['train'][k]:
+            train['token'].append(i[0])
+            train['target'].append(i[4])
+    for k in result['validation']:
+        for i in result['validation'][k]:
+            val['token'].append(i[0])
+            val['target'].append(i[4])
+
+    train_df=pd.DataFrame(train)
+    train_df.to_csv(output_dir+'/data/train.csv')
+    val_df=pd.DataFrame(val)
+    val_df.to_csv(output_dir+'/data/val.csv')
 
     print('\n\n--------------- all outputs written to {} ---------------\n\n'.format(output_dir))

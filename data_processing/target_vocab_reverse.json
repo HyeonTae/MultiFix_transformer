@@ -1,5 +1,4 @@
 {
-    "0": "_<APIcall>_abort",
     "1": "_<APIcall>_abs",
     "2": "_<APIcall>_acos",
     "3": "_<APIcall>_append",
@@ -840,5 +839,6 @@
     "838": "_<type>_signed",
     "839": "_<type>_string",
     "840": "_<type>_unsigned",
-    "841": "_<type>_wchar_t"
+    "841": "_<type>_wchar_t",
+    "842": "_<APIcall>_abort"
 }

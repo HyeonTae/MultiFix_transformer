@@ -1,6 +1,5 @@
 {
     "insert": {
-        "_<APIcall>_abort": "0",
         "_<APIcall>_abs": "1",
         "_<APIcall>_acos": "2",
         "_<APIcall>_append": "3",
@@ -420,10 +419,10 @@
         "_<type>_signed": "417",
         "_<type>_string": "418",
         "_<type>_unsigned": "419",
-        "_<type>_wchar_t": "420"
+        "_<type>_wchar_t": "420",
+	"_<APIcall>_abort": "421"
     },
     "replace": {
-        "_<APIcall>_abort": "421",
         "_<APIcall>_abs": "422",
         "_<APIcall>_acos": "423",
         "_<APIcall>_append": "424",
@@ -843,6 +842,7 @@
         "_<type>_signed": "838",
         "_<type>_string": "839",
         "_<type>_unsigned": "840",
-        "_<type>_wchar_t": "841"
+        "_<type>_wchar_t": "841",
+	"_<APIcall>_abort": "842"
     }
 }
