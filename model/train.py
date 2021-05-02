@@ -6,7 +6,10 @@ import pandas as pd
 import math
 import os
 import time
-
+import argparse
+par = argparse.ArgumentParser()
+par.add_argument("-sp", "--sync_pos", action='store_true')
+args = par.parse_args()
 
 class Trainer():
     def __init__(self,
@@ -16,6 +19,7 @@ class Trainer():
                  device,
                  model_name,
                  batch_size,
+                 use_sync_pos,
                  ):
         self.tokenizer = tokenizer
         self.model = model
@@ -23,6 +27,7 @@ class Trainer():
         self.model_name = model_name
         self.device = device
         self.batch_size = batch_size
+        self.use_sync_pos = use_sync_pos
 
     def set_data(self, train_path, val_path):
         train_df = pd.read_csv(train_path, index_col=[0])
@@ -62,12 +67,21 @@ class Trainer():
 
                 input_list=[]
                 target_list=[]
+                if self.use_sync_pos:
+                    pos_list=[]
+                    sync_pos_list=[]
+                else:
+                    pos_list=None
+                    sync_pos_list=None
                 data = train_dataset[i*batch_size:i*batch_size+batch_size]
                 for indx, row in data.iterrows():
                     _input = row['token']
-                    _target = row['target']
+                    _target = '<bos> '+row['target']
                     input_list.append(_input)
                     target_list.append(_target)
+                    if self.use_sync_pos:
+                        pos_list.append(list(map(int,row['pos'].split())))
+                        sync_pos_list.append(list(map(int,row['sync_pos'].split())))
                 inputs = tokenizer.batch_encode_plus(input_list, return_tensors='pt',
                         padding='max_length', truncation=True, max_length=400)
                 targets = tokenizer.batch_encode_plus(target_list, return_tensors='pt',
@@ -78,7 +92,8 @@ class Trainer():
 
                 optimizer.zero_grad()
                 generator_logit, loss = self.model.forward(inputs["input_ids"], targets["input_ids"],
-                        inputs["attention_mask"], targets["attention_mask"], labels=targets["input_ids"])
+                        inputs["attention_mask"], targets["attention_mask"], labels=targets["input_ids"],
+                        pos=pos_list, sync_pos=sync_pos_list)
 
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -94,12 +109,6 @@ class Trainer():
                 if i % log_interval == 0 and i > 0:
                     cur_loss = total_loss / log_interval
                     elapsed = time.time() - start_time
-                    # print('| epoch {:3d} | {:5d}/{:5d} batches | '
-                    #       'lr {:02.2f} | ms/batch {:5.2f} | '
-                    #       'loss {:5.2f} | ppl {:8.2f}'.format(
-                    #         epoch, i, len(train_dataset), scheduler.get_lr()[0],
-                    #         elapsed * 1000 / log_interval,
-                    #         cur_loss, math.exp(cur_loss)))
                     pb.set_postfix_str('| epoch {:3d} | {:5d}/{:5d} batches | '
                                      'lr {:02.2f} | ms/batch {:5.2f} | '
                                      'loss {:5.2f} | ppl {:8.2f}'.format(
@@ -124,8 +133,14 @@ class Trainer():
                   'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
                                        val_loss, math.exp(val_loss)))
             print('-' * 89)
+            with open('../log/check_point/' + self.model_name + '_model_log.txt', 'a') as ff:
+                ff.write('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
+                  'valid ppl {:8.2f}\n'.format(epoch, (time.time() - epoch_start_time),
+                                       val_loss, math.exp(val_loss)))
+
+            torch.save(model.state_dict(), '../log/pth/' + self.model_name + '_model_save.pth')
             if val_loss < best_val_loss:
-                torch.save(model.state_dict(), '../log/pth/' + self.model_name + '_model_save.pth')
+                torch.save(model.state_dict(), '../log/pth/' + self.model_name + '_best_model_save.pth')
                 best_val_loss = val_loss
                 best_model = model
             start_step = 0
@@ -141,12 +156,21 @@ class Trainer():
             for i in range(num_of_batches):
                 input_list=[]
                 target_list=[]
+                if self.use_sync_pos:
+                    pos_list=[]
+                    sync_pos_list=[]
+                else:
+                    pos_list=None
+                    sync_pos_list=None
                 data = dataset[i*batch_size:i*batch_size+batch_size]
                 for indx, row in data.iterrows():
                     _input = row['token']
-                    _target = row['target']
+                    _target = '<bos> '+row['target']
                     input_list.append(_input)
                     target_list.append(_target)
+                    if self.use_sync_pos:
+                        pos_list.append(list(map(int,row['pos'].split())))
+                        sync_pos_list.append(list(map(int,row['sync_pos'].split())))
                 inputs = tokenizer.batch_encode_plus(input_list, return_tensors='pt',
                         padding='max_length', truncation=True, max_length=400)
                 targets = tokenizer.batch_encode_plus(target_list, return_tensors='pt',
@@ -156,7 +180,8 @@ class Trainer():
                 targets = targets.to(self.device)
 
                 generator_logit, loss = self.model.forward(inputs["input_ids"], targets["input_ids"],
-                        inputs["attention_mask"], targets["attention_mask"], labels=targets["input_ids"])
+                        inputs["attention_mask"], targets["attention_mask"], labels=targets["input_ids"],
+                        pos=pos_list, sync_pos=sync_pos_list)
                 total_loss += loss.item()
 
         return total_loss / (len(dataset) - 1)
@@ -175,9 +200,10 @@ if __name__ == '__main__':
         os.mkdir("../log/check_point")
 
     # model setting
-    sync_pos = False
+    sync_pos = args.sync_pos
+    print("Start training whit synchronized position" if args.sync_pos else "Start training")
     model_name = 'transformer_' + data_name + ('_sync_pos' if sync_pos else '')
-    vocab_num = 1267
+    vocab_num = 1269
     max_length = 400
     d_model = 200
     head_num = 8
@@ -191,7 +217,7 @@ if __name__ == '__main__':
     epochs = 50
     batch_size = 64
     padding_idx = tokenizer.pad_token_id
-    learning_rate = 0.01
+    learning_rate = 0.05
 
     model = Transformer(vocab_num=vocab_num,
                           d_model=d_model,
@@ -204,6 +230,6 @@ if __name__ == '__main__':
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.95)
 
-    trainer = Trainer(tokenizer, model, max_length, device, model_name, batch_size)
+    trainer = Trainer(tokenizer, model, max_length, device, model_name, batch_size, sync_pos)
     train, val = trainer.set_data(train_path, val_path)
     trainer.train(epochs, train, val, optimizer, scheduler)

@@ -157,54 +157,17 @@ class PositionalEncoding(nn.Module):
         x = x + Variable(self.positional_encoding[:, :x.size(1)], requires_grad=False)
         return self.dropout(x)
 
-class SynchronizedPositionalEmbedding(nn.Module):
+class PositionEmbedding(nn.Module):
     def __init__(self, max_seq_len, dim):
-        super().__init__()
-        import sentencepiece as spm
-        self.sp = spm.SentencePieceProcessor()
-        self.sp.Load('../vocab/vocab.model')
-        self.insert_tok = self.insert_token()
-
-        self.max_len = max_seq_len
+        super(PositionEmbedding,self).__init__()
         self.pos_embedding = nn.Embedding(max_seq_len, dim)
 
-    def insert_token(self):
-        insert_tok = list()
-        for i in range(1,422):
-            insert_tok.append(self.sp.piece_to_id('▁' + str(i)))
-
-        return insert_tok
-
-    def forward(self, x, mask, target=None):
-        batch_size = x.size(0)
-        input_lengths = list()
-        for i in mask:
-            input_lengths.append(i.sum().item())
-
-        pe = list()
-        if target is None:
-            for batch in range(batch_size):
-                p = list()
-                for pos in range(self.max_len):
-                    if input_lengths[batch] - pos > 0:
-                        p.append(input_lengths[batch]-pos)
-                    else:
-                        p.append(0)
-                pe.append(p)
-        else:
-            for batch in range(batch_size):
-                p = list()
-                for i in range(self.max_len):
-                    if input_lengths[batch] <= 0:
-                        p.append(0)
-                    else:
-                        if target[batch][i] not in self.insert_tok:
-                            input_lengths[batch] -= 1
-                        p.append(input_lengths[batch])
-                pe.append(p)
-        pos = torch.tensor(pe)
+    def forward(self, x, pos_list):
+        pos = torch.tensor(pos_list)
         if torch.cuda.is_available():
             pos = pos.cuda()
+
+        a = self.pos_embedding(pos)
         x = x + self.pos_embedding(pos)
         return x
 
@@ -225,7 +188,7 @@ class Transformer(nn.Module):
         self.embedding = Embeddings(vocab_num, d_model)
         self.sync_pos = sync_pos
         if self.sync_pos:
-            self.positional_encoding = SynchronizedPositionalEmbedding(max_seq_len,d_model)
+            self.positional_encoding = PositionEmbedding(max_seq_len,d_model)
         else:
             self.positional_encoding = PositionalEncoding(max_seq_len,d_model)
 
@@ -234,9 +197,9 @@ class Transformer(nn.Module):
 
         self.generator = Generator(d_model, vocab_num)
 
-    def forward(self, input, target, input_mask, target_mask, labels=None):
+    def forward(self, input, target, input_mask, target_mask, labels=None, pos=None, sync_pos=None):
         if self.sync_pos:
-            x = self.positional_encoding(self.embedding(input), input_mask)
+            x = self.positional_encoding(self.embedding(input), pos)
         else:
             x = self.positional_encoding(self.embedding(input))
         input_mask = input_mask.unsqueeze(1)
@@ -245,7 +208,7 @@ class Transformer(nn.Module):
             x = encoder(x, input_mask)
 
         if self.sync_pos:
-            target = self.positional_encoding(self.embedding(target), target_mask, target=target)
+            target = self.positional_encoding(self.embedding(target), sync_pos)
         else:
             target = self.positional_encoding(self.embedding(target))
 
@@ -267,7 +230,7 @@ class Transformer(nn.Module):
 
     def encode(self,input, input_mask):
         if self.sync_pos:
-            x = self.positional_encoding(self.embedding(input), input_mask)
+            x = self.positional_encoding(self.embedding(input), pos)
         else:
             x = self.positional_encoding(self.embedding(input))
         for encoder in self.encoders:
@@ -276,7 +239,7 @@ class Transformer(nn.Module):
 
     def decode(self, encode_output, encoder_mask, target, target_mask):
         if self.sync_pos:
-            target = self.positional_encoding(self.embedding(target), target_mask, target=target)
+            target = self.positional_encoding(self.embedding(target), sync_pos)
         else:
             target = self.positional_encoding(self.embedding(target))
         for decoder in self.decoders:
