@@ -198,12 +198,14 @@ class Transformer(nn.Module):
         self.generator = Generator(d_model, vocab_num)
 
     def forward(self, input, target, input_mask, target_mask, labels=None, pos=None, sync_pos=None):
+
+        #print('input_mask: {}'.format(input_mask.shape))
+        #print('target_mask: {}'.format(target_mask.shape))
+
         if self.sync_pos:
             x = self.positional_encoding(self.embedding(input), pos)
         else:
             x = self.positional_encoding(self.embedding(input))
-        input_mask = input_mask.unsqueeze(1)
-        target_mask = target_mask.unsqueeze(1)
         for encoder in self.encoders:
             x = encoder(x, input_mask)
 
@@ -228,7 +230,8 @@ class Transformer(nn.Module):
 
         return lm_logits, loss
 
-    def encode(self,input, input_mask):
+    def encode(self, input, input_mask, pos=None):
+        #print('input_mask: {}'.format(input_mask.shape))
         if self.sync_pos:
             x = self.positional_encoding(self.embedding(input), pos)
         else:
@@ -237,7 +240,8 @@ class Transformer(nn.Module):
             x = encoder(x, input_mask)
         return x
 
-    def decode(self, encode_output, encoder_mask, target, target_mask):
+    def decode(self, encode_output, encoder_mask, target, target_mask, sync_pos=None):
+        #print('target_mask: {}'.format(target_mask.shape))
         if self.sync_pos:
             target = self.positional_encoding(self.embedding(target), sync_pos)
         else:
